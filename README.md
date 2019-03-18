@@ -18,6 +18,17 @@ An easy way to get started with JavaScript on the command line. [Read more about
 
 * `git clone git@github.com:rwieruch/node-babel-server.git`
 * `cd node-babel-server`
+* `touch .env`
+* `copy below contents to .env file
 * `npm install`
 * `npm start`
 * optional: include *.env* in your *.gitignore*
+
+.env
+
+PORT=8000
+DATABASE=postgres
+DATABASE_USER=postgres
+DATABASE_PASSWORD=12345
+
+SECRET=wr3r23fwfwefwekwself.2456342.dawqdq
