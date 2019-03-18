@@ -25,7 +25,6 @@ An easy way to get started with JavaScript on the command line. [Read more about
 * optional: include *.env* in your *.gitignore*
 
 .env
-
 * PORT=8000
 * DATABASE=postgres
 * DATABASE_USER=postgres
