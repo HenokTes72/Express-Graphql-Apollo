@@ -1,29 +1,77 @@
-import uuidv4 from 'uuid/v4';
+ import jwt from 'jsonwebtoken';
+ import { combineResolvers } from 'graphql-resolvers';
+ import { AuthenticationError, UserInputError } from 'apollo-server';
+
+ import { isAdmin } from './authorization';
 
  export default {
     Query: {
-      users: (parent, args, { models }) => {
-        return Object.values(models.users);
+      users: async (parent, args, { models }) => {
+        return await models.User.findAll();
       },
-      me: (parent, args, { me }) => {
-        return me;
+      user: async (parent, { id }, { models } ) => {
+        return await models.User.findById(id);
       },
-      user: (parent, { id }, { models } ) => {
-        return models.users[id];
+      me: async (parent, args, { me }) => {
+        if(!me) {
+          return null;
+        }
+
+        return await models.User.findById(me.id);
       },
-      messages: (parent, args, { models }) => {
-        return Object.values(models.messages)
+    },
+
+    Mutation: {
+      signUp: async (parent, { username, email, password }, { models, secret }) => {
+        const user = await models.User.create({
+          username,
+          email,
+          password
+        });
+
+        // so here we are adjusting the token to expire after 30 minutes.
+        return { token: createToken(user, secret, '30m') };
       },
-      message: (parent, { id }, { models }) => {
-        return models.messages[id];
-      }
+      signIn: async (parent, { login, password }, { models, secret }) => {
+        const user = await models.User.findByLogin(login);
+
+        if(!user) {
+          throw new UserInputError('No user found with this login ceredentials');
+        }
+
+        const isValid = await user.validatePassword(password);
+
+        if(!isValid) {
+          throw new AuthenticationError('Invalid password');
+        }
+
+        return { token: createToken(user, secret, '30m') }
+      },
+      
+      deleteUser: combineResolvers(
+        isAdmin,
+        async (parent, { id }, { models }) => {
+          return await models.User.destroy({
+            where: { id }
+          })
+        },
+      ),
     },
   
     User: {
-      messages: (user, args, { models }) => {
-        return Object.values(models.messages).filter(
-          message => message.userId === user.id,
-        );
-      }
-    }
+      messages: async (user, args, { models }) => {
+        return await models.Message.findAll({
+          where: {
+            userId: user.id,
+          },
+        });
+      },
+    },
+  };
+
+  const createToken = async (user, secret, expiresIn) => {
+    const { id, email, username, role } = user;
+    return await jwt.sign({ id, email, username, role }, secret, {
+      expiresIn
+    });
   };

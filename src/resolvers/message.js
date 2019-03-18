@@ -1,56 +1,115 @@
-import uuidv4 from 'uuid/v4';
+import { ForbiddenError } from 'apollo-server';
+import { combineResolvers } from 'graphql-resolvers';
+import Sequelize from 'sequelize';
 
- export default {
-    Query: {
-      messages: (parent, args, { models }) => {
-        return Object.values(models.messages)
-      },
-      message: (parent, { id }, { models }) => {
-        return models.messages[id];
-      }
+import pubsub, { EVENTS } from '../subscription';
+import { isAuthenticated, isMessageOwner } from './authorization';
+import { cursorTo } from 'readline';
+
+const toCursorHash = string => Buffer.from(string).toString('base64');
+
+const fromCursorHash = string =>
+  Buffer.from(string, 'base64').toString('ascii');
+ 
+export default {
+  Query: {
+    messages: async (parent, { cursor, limit = 100 }, { models }) => {
+      const cursorOptions = cursor 
+        ? {
+            where: {
+              createdAt: {
+                [Sequelize.Op.lt]: fromCursorHash(cursor),
+              },
+            },
+          }
+          : {};
+        const messages = await models.Message.findAll({
+          order: [['createdAt', 'DESC']],
+          limit: limit + 1,
+          ...cursorOptions,
+        });
+
+        const hasNextPage = messages.length > limit;
+        const edges = hasNextPage ? messages.slice(0, -1) : messages;
+
+        return {
+          edges,
+          pageInfo: {
+            hasNextPage,
+            endCursor: toCursorHash(
+              edges[edges.length - 1].createdAt.toString(),
+            ),
+          },
+        };
     },
-  
-    Mutation: {
-      createMessage: (parent, { text }, { me, models }) => {
-        const id = uuidv4();
-        const message= {
-          id,
+    message: async (parent, { id }, { models }) => {
+      return await models.Message.findById(id);
+    }
+  },
+
+  Mutation: {
+    createMessage: combineResolvers(
+      isAuthenticated,
+      async (parent, { text }, { me, models }) => {
+        const message = await models.Message.create({
           text,
           userId: me.id
-        }
-  
-        models.messages[id] = message;
-        models.users[me.id].messageIds.push(id);
-  
+        });
+
+        // console.log("On the way to publish: ", message);
+        pubsub.publish(EVENTS.MESSAGE.CREATED, {
+          // console.log("help needed");
+          messageCreated: { message },
+        });
+
         return message;
       },
-      deleteMessage: (parent, { id }, { models }) => {
-        const { [id]: message, ...otherMessages } = models.messages;
-  
-        if(!message) {
-          return false;
-        }
-  
-        models.messages = otherMessages;
-  
-        return true;
+    ),
+
+      //option 2, throwing an error in the resolver, so that the
+      // apollo server converts into a valid error message
+
+      // try { 
+      //   return await models.Message.create({
+      //     text,
+      //     userId: me.id
+      //   });
+      // }
+      // catch(error) {
+      //   throw new Error("You can't pass an empty string for the text field")
+      // }
+    
+
+    deleteMessage: combineResolvers(
+      isAuthenticated,
+      isMessageOwner,
+      async (parent, { id }, { models }) => {
+        return await models.Message.destroy({ where: { id } })
       },
-      updateMessage: (parent, { id, text }, { models }) => {
-        const message = models.messages[id];
-  
-        if(!message) {
-          return false;
+    ),  
+
+    
+    updateMessage: async (parent, { id, text }, { models }) => {
+      return await models.Message.update(
+        {
+          text
+        },
+        {
+          where: { id }
         }
-  
-        message["text"] = text;
-        models.messages = { ...models.messages,  [id]: message };
-        return true;
-      },
+      );
     },
-  
-    Message: {
-      user: (message, args, { models }) => {  
-        return models.users[message.userId];
-      }
+  },
+
+  Message: {
+    user: async (message, args, { loaders }) => {  
+      return await loaders.user.load(message.userId);
+    }
+  },
+
+  Subscription: {
+    messageCreated: {
+      subscribe: () => pubsub.asyncIterator(EVENTS.MESSAGE.CREATED),
     },
-  };
+  },
+};
