@@ -2,7 +2,7 @@ import Sequelize from 'sequelize';
 
 let sequelize;
 if(process.env.DATABASE_URL) {
-  sequelize = new sequelize(process.env.DATABASE_URL, {
+  sequelize = new Sequelize(process.env.DATABASE_URL, {
     dialect: 'postgres',
   });
 }
